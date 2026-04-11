@@ -11,9 +11,10 @@ app.use(express.json());
 app.use(
   cors({
     origin: [
-      "http://localhost:5173", // local frontend
-      "https://your-frontend.vercel.app", // replace after deployment
+      "http://localhost:5173",
+      "https://exam-practice-app-theta.vercel.app",
     ],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   }),
 );
