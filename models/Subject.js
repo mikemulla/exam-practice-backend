@@ -1,0 +1,15 @@
+const mongoose = require("mongoose");
+
+const subjectSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  duration: {
+    type: Number,
+    default: 300,
+  },
+});
+
+module.exports = mongoose.model("Subject", subjectSchema);
