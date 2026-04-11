@@ -18,6 +18,10 @@ app.use(
   }),
 );
 
+app.get("/", (req, res) => {
+  res.send("Exam Practice Backend is live");
+});
+
 /* ROUTES */
 const subjectRoutes = require("./routes/subjectRoutes");
 const topicRoutes = require("./routes/topicRoutes");
