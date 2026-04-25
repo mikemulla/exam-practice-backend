@@ -7,6 +7,10 @@ const router = express.Router();
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+router.get("/", (req, res) => {
+  res.send("Request route is working");
+});
+
 router.post("/subject-request", upload.single("file"), async (req, res) => {
   try {
     const { subject, topic, timer } = req.body;

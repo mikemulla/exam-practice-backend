@@ -21,13 +21,15 @@ app.get("/", (req, res) => {
 });
 
 /* ROUTES */
-const subjectRoutes = require("./routes/subjectRoutes");
-const topicRoutes = require("./routes/topicRoutes");
+const subjectRoutes  = require("./routes/subjectRoutes");
+const topicRoutes    = require("./routes/topicRoutes");
 const questionRoutes = require("./routes/questionRoutes");
+const requestRoutes = require("./routes/requestRoutes");
 
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/topics", topicRoutes);
 app.use("/api/questions", questionRoutes);
+app.use("/api/requests", requestRoutes);
 
 /* DB CONNECTION */
 mongoose
