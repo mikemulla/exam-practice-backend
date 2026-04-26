@@ -24,12 +24,14 @@ app.get("/", (req, res) => {
 const subjectRoutes  = require("./routes/subjectRoutes");
 const topicRoutes    = require("./routes/topicRoutes");
 const questionRoutes = require("./routes/questionRoutes");
-const requestRoutes = require("./routes/requestRoutes");
+const requestRoutes  = require("./routes/requestRoutes");
+const authRoutes     = require("./routes/authRoutes");
 
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/topics", topicRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/requests", requestRoutes);
+app.use("/api/auth", authRoutes);
 
 /* DB CONNECTION */
 mongoose

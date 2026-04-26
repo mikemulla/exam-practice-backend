@@ -1,9 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const Question = require("../models/Question");
+const verifyAdminToken = require("../middleware/authMiddleware");
 
 // Add question
-router.post("/", async (req, res) => {
+router.post("/", verifyAdminToken, async (req, res) => {
   try {
     const question = new Question({
       subjectId: req.body.subjectId,
@@ -22,7 +23,7 @@ router.post("/", async (req, res) => {
 });
 
 // Bulk add questions
-router.post("/bulk", async (req, res) => {
+router.post("/bulk", verifyAdminToken, async (req, res) => {
   try {
     const { subjectId, questions } = req.body;
 
@@ -92,7 +93,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // Update question
-router.put("/:id", async (req, res) => {
+router.put("/:id", verifyAdminToken, async (req, res) => {
   try {
     const updatedQuestion = await Question.findByIdAndUpdate(
       req.params.id,
@@ -114,7 +115,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // Delete question
-router.delete("/:id", async (req, res) => {
+router.put("/:id", verifyAdminToken, async (req, res) => {
   try {
     await Question.findByIdAndDelete(req.params.id);
     res.json({ message: "Question deleted successfully" });

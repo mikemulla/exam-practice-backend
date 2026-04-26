@@ -2,9 +2,10 @@ const express = require("express");
 const router = express.Router();
 const Subject = require("../models/Subject");
 const Question = require("../models/Question");
+const verifyAdminToken = require("../middleware/authMiddleware");
 
 // Add subject
-router.post("/", async (req, res) => {
+router.post("/", verifyAdminToken, async (req, res) => {
   try {
     const subject = new Subject({
       name: req.body.name,
@@ -39,7 +40,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // Update subject
-router.put("/:id", async (req, res) => {
+router.put("/:id", verifyAdminToken, async (req, res) => {
   try {
     const updatedSubject = await Subject.findByIdAndUpdate(
       req.params.id,
@@ -57,7 +58,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // Delete subject
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", verifyAdminToken, async (req, res) => {
   try {
     const subjectId = req.params.id;
 

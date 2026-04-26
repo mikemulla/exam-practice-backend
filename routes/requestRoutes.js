@@ -5,7 +5,7 @@ const nodemailer = require("nodemailer");
 const router = express.Router();
 
 const storage = multer.memoryStorage();
-cconst upload = multer({
+const upload = multer({
   storage,
   limits: {
     fileSize: 15 * 1024 * 1024, // 15MB
@@ -62,17 +62,17 @@ router.post("/subject-request", upload.single("file"), async (req, res) => {
     console.error("Email request error:", error);
     res.status(500).json({ message: "Failed to send request" });
   }
-router.use((error, req, res, next) => {
-  if (error.code === "LIMIT_FILE_SIZE") {
-    return res.status(400).json({
-      message: "File is too large. Maximum file size is 5MB.",
-    });
-  }
+  router.use((error, req, res, next) => {
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        message: "File is too large. Maximum file size is 15MB.",
+      });
+    }
 
-  return res.status(500).json({
-    message: "File upload failed.",
+    return res.status(500).json({
+      message: "File upload failed.",
+    });
   });
-});
 });
 
 module.exports = router;
