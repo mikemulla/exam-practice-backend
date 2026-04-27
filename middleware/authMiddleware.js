@@ -15,21 +15,6 @@ function verifyAdminToken(req, res, next) {
   } catch (error) {
     return res.status(401).json({ message: "Invalid or expired token" });
   }
-  api.interceptors.response.use(
-    (response) => response,
-
-    (error) => {
-      if (error.response && error.response.status === 401) {
-        // Token expired or invalid
-
-        localStorage.removeItem("adminToken");
-
-        window.location.href = "/admin-login";
-      }
-
-      return Promise.reject(error);
-    },
-  );
 }
 
 module.exports = verifyAdminToken;
