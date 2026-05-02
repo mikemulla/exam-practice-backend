@@ -2,9 +2,16 @@ const express = require("express");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
 const SubjectRequest = require("../models/SubjectRequest");
-const { verifyAdminToken, verifyUserToken } = require("../middleware/authMiddleware");
+const {
+  verifyAdminToken,
+  verifyUserToken,
+} = require("../middleware/authMiddleware");
 const { subjectRequestLimiter } = require("../middleware/rateLimiter");
-const { subjectRequestValidation, validObjectId, paginationValidation } = require("../middleware/validators");
+const {
+  subjectRequestValidation,
+  validObjectId,
+  paginationValidation,
+} = require("../middleware/validators");
 
 const router = express.Router();
 
@@ -45,8 +52,13 @@ function isMagicBytesAllowed(file) {
 
   if (file.mimetype === "application/pdf") return first5Text === "%PDF-";
   if (file.mimetype === "image/png") return first4 === "89504e47";
-  if (file.mimetype === "image/jpeg") return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-  if (file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return first4 === "504b0304";
+  if (file.mimetype === "image/jpeg")
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (
+    file.mimetype ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  )
+    return first4 === "504b0304";
   if (file.mimetype === "application/msword") return first4 === "d0cf11e0";
   if (file.mimetype === "text/plain") return true;
 
@@ -71,9 +83,16 @@ const fileMeta = (file) => ({
   fileType: file?.mimetype ?? "",
 });
 
+// FIXED: Correct TLS configuration instead of deprecated service: "gmail"
+// - port 587: STARTTLS (upgrade connection to TLS after SMTP hello)
+// - secure: false: Don't use SSL immediately, use STARTTLS instead
+// - requireTLS: true: CRITICAL - Force TLS upgrade, fails if TLS unavailable
 const createTransporter = () =>
   nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // Use STARTTLS, not immediate SSL
+    requireTLS: true, // CRITICAL: Force TLS, required for Render/production
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
@@ -93,11 +112,21 @@ router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
     }
 
     const [requests, total] = await Promise.all([
-      SubjectRequest.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      SubjectRequest.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
       SubjectRequest.countDocuments(query),
     ]);
 
-    res.json({ data: requests, requests, page, limit, total, totalPages: Math.ceil(total / limit) });
+    res.json({
+      data: requests,
+      requests,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    });
   } catch (error) {
     console.error("Fetch requests error:", error);
     res.status(500).json({ message: "Failed to fetch requests" });
@@ -115,7 +144,10 @@ router.post(
       const { subject, topic, timer } = req.body;
 
       if (!isMagicBytesAllowed(req.file)) {
-        return res.status(400).json({ message: "Uploaded file content does not match the selected file type." });
+        return res.status(400).json({
+          message:
+            "Uploaded file content does not match the selected file type.",
+        });
       }
 
       const savedRequest = await SubjectRequest.create({
@@ -134,18 +166,23 @@ router.post(
           text: `New subject request\nSubject: ${subject}\nTopic: ${topic}\nTimer: ${timer} minutes`,
           html: `
             <h2>New Subject Request</h2>
-            <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
-            <p><strong>Topic:</strong> ${escapeHtml(topic)}</p>
-            <p><strong>Timer:</strong> ${escapeHtml(timer)} minutes</p>
-            <p><strong>Status:</strong> Saved to admin inbox</p>
+            <p><strong>Subject: </strong> ${escapeHtml(subject)}</p>
+            <p><strong>Topic  : </strong> ${escapeHtml(topic)}</p>
+            <p><strong>Timer  : </strong> ${escapeHtml(timer)} minutes</p>
+            <p><strong>Status : </strong> Saved to admin inbox</p>
           `,
-          attachments: req.file ? [{ filename: req.file.originalname, content: req.file.buffer }] : [],
+          attachments: req.file
+            ? [{ filename: req.file.originalname, content: req.file.buffer }]
+            : [],
         });
       } catch (mailError) {
         console.error("Email failed. Request still saved:", mailError);
       }
 
-      res.status(201).json({ message: "Request sent and saved successfully", request: savedRequest });
+      res.status(201).json({
+        message: "Request sent and saved successfully",
+        request: savedRequest,
+      });
     } catch (error) {
       console.error("Subject request error:", error);
       res.status(500).json({ message: "Failed to send request" });
@@ -153,36 +190,50 @@ router.post(
   },
 );
 
-router.put("/:id/reviewed", verifyAdminToken, validObjectId("id"), async (req, res) => {
-  try {
-    const request = await SubjectRequest.findByIdAndUpdate(
-      req.params.id,
-      { status: "reviewed" },
-      { returnDocument: "after" },
-    );
+router.put(
+  "/:id/reviewed",
+  verifyAdminToken,
+  validObjectId("id"),
+  async (req, res) => {
+    try {
+      const request = await SubjectRequest.findByIdAndUpdate(
+        req.params.id,
+        { status: "reviewed" },
+        { returnDocument: "after" },
+      );
 
-    if (!request) return res.status(404).json({ message: "Request not found" });
-    res.json(request);
-  } catch (error) {
-    console.error("Review request error:", error);
-    res.status(500).json({ message: "Failed to update request" });
-  }
-});
+      if (!request)
+        return res.status(404).json({ message: "Request not found" });
+      res.json(request);
+    } catch (error) {
+      console.error("Review request error:", error);
+      res.status(500).json({ message: "Failed to update request" });
+    }
+  },
+);
 
-router.delete("/:id", verifyAdminToken, validObjectId("id"), async (req, res) => {
-  try {
-    const request = await SubjectRequest.findByIdAndDelete(req.params.id);
-    if (!request) return res.status(404).json({ message: "Request not found" });
-    res.json({ message: "Request deleted successfully" });
-  } catch (error) {
-    console.error("Delete request error:", error);
-    res.status(500).json({ message: "Failed to delete request" });
-  }
-});
+router.delete(
+  "/:id",
+  verifyAdminToken,
+  validObjectId("id"),
+  async (req, res) => {
+    try {
+      const request = await SubjectRequest.findByIdAndDelete(req.params.id);
+      if (!request)
+        return res.status(404).json({ message: "Request not found" });
+      res.json({ message: "Request deleted successfully" });
+    } catch (error) {
+      console.error("Delete request error:", error);
+      res.status(500).json({ message: "Failed to delete request" });
+    }
+  },
+);
 
 router.use((err, _req, res, _next) => {
   if (err.code === "LIMIT_FILE_SIZE") {
-    return res.status(400).json({ message: "File too large. Maximum size is 15MB." });
+    return res
+      .status(400)
+      .json({ message: "File too large. Maximum size is 15MB." });
   }
   if (err.message === "Unsupported file type") {
     return res.status(400).json({ message: "Unsupported file type." });
