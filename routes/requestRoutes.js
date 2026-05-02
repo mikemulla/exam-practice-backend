@@ -144,10 +144,12 @@ router.post(
       const { subject, topic, timer } = req.body;
 
       if (!isMagicBytesAllowed(req.file)) {
-        return res.status(400).json({
-          message:
-            "Uploaded file content does not match the selected file type.",
-        });
+        return res
+          .status(400)
+          .json({
+            message:
+              "Uploaded file content does not match the selected file type.",
+          });
       }
 
       const savedRequest = await SubjectRequest.create({
@@ -166,10 +168,10 @@ router.post(
           text: `New subject request\nSubject: ${subject}\nTopic: ${topic}\nTimer: ${timer} minutes`,
           html: `
             <h2>New Subject Request</h2>
-            <p><strong>Subject: </strong> ${escapeHtml(subject)}</p>
-            <p><strong>Topic  : </strong> ${escapeHtml(topic)}</p>
-            <p><strong>Timer  : </strong> ${escapeHtml(timer)} minutes</p>
-            <p><strong>Status : </strong> Saved to admin inbox</p>
+            <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
+            <p><strong>Topic:</strong> ${escapeHtml(topic)}</p>
+            <p><strong>Timer:</strong> ${escapeHtml(timer)} minutes</p>
+            <p><strong>Status:</strong> Saved to admin inbox</p>
           `,
           attachments: req.file
             ? [{ filename: req.file.originalname, content: req.file.buffer }]
@@ -179,10 +181,12 @@ router.post(
         console.error("Email failed. Request still saved:", mailError);
       }
 
-      res.status(201).json({
-        message: "Request sent and saved successfully",
-        request: savedRequest,
-      });
+      res
+        .status(201)
+        .json({
+          message: "Request sent and saved successfully",
+          request: savedRequest,
+        });
     } catch (error) {
       console.error("Subject request error:", error);
       res.status(500).json({ message: "Failed to send request" });
