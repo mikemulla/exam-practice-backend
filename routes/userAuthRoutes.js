@@ -48,15 +48,25 @@ function escapeHtml(value = "") {
 // - port 587: STARTTLS (upgrade connection to TLS after SMTP hello)
 // - secure: false: Don't use SSL immediately, use STARTTLS instead
 // - requireTLS: true: CRITICAL - Force TLS upgrade, fails if TLS unavailable
+// FIXED: Complete production SMTP configuration
 const createTransporter = () =>
   nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
-    secure: false, // Use STARTTLS, not immediate SSL
-    requireTLS: true, // CRITICAL: Force TLS, required for Render/production
+    secure: false, // Use STARTTLS, not SSL
+    requireTLS: true, // CRITICAL: Force TLS upgrade
+    pool: {
+      maxConnections: 1,
+      maxMessages: 5,
+      rateDelta: 5000,
+      rateLimit: 3,
+    },
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      pass: process.env.EMAIL_PASS, // Must be Gmail app password, not regular password
+    },
+    tls: {
+      rejectUnauthorized: false, // Allow self-signed certs
     },
   });
 
