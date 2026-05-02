@@ -9,6 +9,9 @@ const { apiLimiter } = require("./middleware/rateLimiter");
 
 const app = express();
 
+// CRITICAL: Trust proxy for Render/Vercel - must be set BEFORE any middleware that checks X-Forwarded-For
+app.set("trust proxy", 1);
+
 app.use(helmet());
 
 app.use(express.json({ limit: "2mb" }));
@@ -52,6 +55,7 @@ app.use(
 
 app.options(/.*/, cors());
 
+// Apply rate limiter AFTER trust proxy is set
 app.use("/api", apiLimiter);
 
 app.get("/", (_req, res) => {
