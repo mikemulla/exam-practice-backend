@@ -1,6 +1,6 @@
 const express = require("express");
 const multer = require("multer");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const SubjectRequest = require("../models/SubjectRequest");
 const {
   verifyAdminToken,
@@ -14,6 +14,8 @@ const {
 } = require("../middleware/validators");
 
 const router = express.Router();
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
@@ -85,17 +87,46 @@ const fileMeta = (file) => ({
   fileType: file?.mimetype ?? "",
 });
 
-const createTransporter = () =>
-  nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+function getEmailFrom() {
+  return process.env.EMAIL_FROM || "Exam Practice <onboarding@resend.dev>";
+}
+
+function getRequestReceiverEmail() {
+  return process.env.REQUEST_RECEIVER_EMAIL || process.env.EMAIL_USER;
+}
+
+async function sendSubjectRequestEmail({ subject, topic, timer, file }) {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
+
+  const to = getRequestReceiverEmail();
+  if (!to) {
+    throw new Error("REQUEST_RECEIVER_EMAIL is not configured");
+  }
+
+  return resend.emails.send({
+    from: getEmailFrom(),
+    to,
+    subject: `New Subject Request: ${subject}`,
+    text: `New subject request\nSubject: ${subject}\nTopic: ${topic}\nTimer: ${timer} minutes`,
+    html: `
+      <h2>New Subject Request</h2>
+      <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
+      <p><strong>Topic:</strong> ${escapeHtml(topic)}</p>
+      <p><strong>Timer:</strong> ${escapeHtml(timer)} minutes</p>
+      <p><strong>Status:</strong> Saved to admin inbox</p>
+    `,
+    attachments: file
+      ? [
+          {
+            filename: file.originalname,
+            content: file.buffer.toString("base64"),
+          },
+        ]
+      : [],
   });
+}
 
 router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
   try {
@@ -143,8 +174,7 @@ router.post(
 
       if (!isMagicBytesAllowed(req.file)) {
         return res.status(400).json({
-          message:
-            "Uploaded file content does not match the selected file type.",
+          message: "Uploaded file content does not match the selected file type.",
         });
       }
 
@@ -161,77 +191,54 @@ router.post(
         request: savedRequest,
       });
 
-      createTransporter()
-        .sendMail({
-          from: `"Exam Practice" <${process.env.EMAIL_USER}>`,
-          to: process.env.REQUEST_RECEIVER_EMAIL,
-          subject: `New Subject Request: ${subject}`,
-          text: `New subject request\nSubject: ${subject}\nTopic: ${topic}\nTimer: ${timer} minutes`,
-          html: `
-            <h2>New Subject Request</h2>
-            <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
-            <p><strong>Topic:</strong> ${escapeHtml(topic)}</p>
-            <p><strong>Timer:</strong> ${escapeHtml(timer)} minutes</p>
-            <p><strong>Status:</strong> Saved to admin inbox</p>
-          `,
-          attachments: req.file
-            ? [{ filename: req.file.originalname, content: req.file.buffer }]
-            : [],
-        })
+      sendSubjectRequestEmail({
+        subject,
+        topic,
+        timer,
+        file: req.file,
+      })
         .then(() => {
-          console.log("Subject request email sent");
+          console.log("Subject request notification sent");
         })
         .catch((mailError) => {
-          console.error("Email failed. Request still saved:", mailError);
+          console.error("Resend subject request email failed. Request still saved:", mailError);
         });
     } catch (error) {
       console.error("Subject request error:", error);
       res.status(500).json({ message: "Failed to send request" });
     }
-  },
+  }
 );
 
-router.put(
-  "/:id/reviewed",
-  verifyAdminToken,
-  validObjectId("id"),
-  async (req, res) => {
-    try {
-      const request = await SubjectRequest.findByIdAndUpdate(
-        req.params.id,
-        { status: "reviewed" },
-        { returnDocument: "after" },
-      );
+router.put("/:id/reviewed", verifyAdminToken, validObjectId("id"), async (req, res) => {
+  try {
+    const request = await SubjectRequest.findByIdAndUpdate(
+      req.params.id,
+      { status: "reviewed" },
+      { returnDocument: "after" }
+    );
 
-      if (!request)
-        return res.status(404).json({ message: "Request not found" });
+    if (!request) return res.status(404).json({ message: "Request not found" });
 
-      res.json(request);
-    } catch (error) {
-      console.error("Review request error:", error);
-      res.status(500).json({ message: "Failed to update request" });
-    }
-  },
-);
+    res.json(request);
+  } catch (error) {
+    console.error("Review request error:", error);
+    res.status(500).json({ message: "Failed to update request" });
+  }
+});
 
-router.delete(
-  "/:id",
-  verifyAdminToken,
-  validObjectId("id"),
-  async (req, res) => {
-    try {
-      const request = await SubjectRequest.findByIdAndDelete(req.params.id);
+router.delete("/:id", verifyAdminToken, validObjectId("id"), async (req, res) => {
+  try {
+    const request = await SubjectRequest.findByIdAndDelete(req.params.id);
 
-      if (!request)
-        return res.status(404).json({ message: "Request not found" });
+    if (!request) return res.status(404).json({ message: "Request not found" });
 
-      res.json({ message: "Request deleted successfully" });
-    } catch (error) {
-      console.error("Delete request error:", error);
-      res.status(500).json({ message: "Failed to delete request" });
-    }
-  },
-);
+    res.json({ message: "Request deleted successfully" });
+  } catch (error) {
+    console.error("Delete request error:", error);
+    res.status(500).json({ message: "Failed to delete request" });
+  }
+});
 
 router.use((err, _req, res, _next) => {
   if (err.code === "LIMIT_FILE_SIZE") {

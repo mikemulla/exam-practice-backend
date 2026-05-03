@@ -2,7 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const User = require("../models/User");
 const Course = require("../models/Course");
 const TestResult = require("../models/TestResult");
@@ -26,6 +26,8 @@ const {
 
 const router = express.Router();
 
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 const FALLBACK_DUMMY_HASH =
   "$2a$12$Cj6UzMDM.H6dfI/f/IKcFei6dn9BpqyF3u6SX0plfDx2bUp7sXcXK";
 
@@ -44,50 +46,59 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
-const createTransporter = () =>
-  nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+function getEmailFrom() {
+  return process.env.EMAIL_FROM || "Exam Practice <onboarding@resend.dev>";
+}
+
+async function sendResetEmail(user, resetUrl) {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
+
+  return resend.emails.send({
+    from: getEmailFrom(),
+    to: user.email,
+    subject: "Password Reset Request",
+    text: `Hi ${user.fullName},\n\nUse this link to reset your password. It expires in 1 hour:\n${resetUrl}\n\nIf you did not request this, ignore this email.`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #0f172a;">Reset your password</h2>
+        <p style="color: #475569;">Hi ${escapeHtml(user.fullName)},</p>
+        <p style="color: #475569;">You requested a password reset. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+        <a href="${resetUrl}" style="display:inline-block;margin:20px 0;padding:12px 24px;background:#185FA5;color:white;border-radius:8px;text-decoration:none;font-weight:600;">Reset Password</a>
+        <p style="color:#94a3b8;font-size:13px;">If you did not request this, you can safely ignore this email.</p>
+      </div>
+    `,
   });
+}
 
-router.get(
-  "/admin/all",
-  verifyAdminToken,
-  paginationValidation,
-  async (req, res) => {
-    try {
-      const { page, limit, skip } = getPagination(req);
+router.get("/admin/all", verifyAdminToken, paginationValidation, async (req, res) => {
+  try {
+    const { page, limit, skip } = getPagination(req);
 
-      const [users, total] = await Promise.all([
-        User.find()
-          .populate("courseId", "name")
-          .select("-password -resetPasswordToken -resetPasswordExpires")
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit),
-        User.countDocuments(),
-      ]);
+    const [users, total] = await Promise.all([
+      User.find()
+        .populate("courseId", "name")
+        .select("-password -resetPasswordToken -resetPasswordExpires")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      User.countDocuments(),
+    ]);
 
-      res.json({
-        data: users,
-        users,
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      });
-    } catch (error) {
-      console.error("Error fetching users:", error);
-      res.status(500).json({ message: "Failed to fetch users" });
-    }
-  },
-);
+    res.json({
+      data: users,
+      users,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
 
 router.get("/me", verifyUserToken, async (req, res) => {
   try {
@@ -104,25 +115,20 @@ router.get("/me", verifyUserToken, async (req, res) => {
   }
 });
 
-router.delete(
-  "/:id",
-  verifyAdminToken,
-  validObjectId("id"),
-  async (req, res) => {
-    try {
-      const user = await User.findByIdAndDelete(req.params.id);
+router.delete("/:id", verifyAdminToken, validObjectId("id"), async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
 
-      if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-      await TestResult.deleteMany({ userId: req.params.id });
+    await TestResult.deleteMany({ userId: req.params.id });
 
-      res.json({ message: "User and related results deleted successfully" });
-    } catch (error) {
-      console.error("Error deleting user:", error);
-      res.status(500).json({ message: "Failed to delete user" });
-    }
-  },
-);
+    res.json({ message: "User and related results deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting user:", error);
+    res.status(500).json({ message: "Failed to delete user" });
+  }
+});
 
 router.post("/signup", authLimiter, signupValidation, async (req, res) => {
   try {
@@ -151,7 +157,7 @@ router.post("/signup", authLimiter, signupValidation, async (req, res) => {
     const token = jwt.sign(
       { userId: user._id, role: "user" },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" },
+      { expiresIn: "7d" }
     );
 
     res.status(201).json({
@@ -178,10 +184,7 @@ router.post("/login", authLimiter, loginValidation, async (req, res) => {
     const user = await User.findOne({ email }).populate("courseId", "name");
 
     if (!user) {
-      await bcrypt.compare(
-        password,
-        process.env.DUMMY_HASH || FALLBACK_DUMMY_HASH,
-      );
+      await bcrypt.compare(password, process.env.DUMMY_HASH || FALLBACK_DUMMY_HASH);
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
@@ -194,7 +197,7 @@ router.post("/login", authLimiter, loginValidation, async (req, res) => {
     const token = jwt.sign(
       { userId: user._id, role: "user" },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" },
+      { expiresIn: "7d" }
     );
 
     res.json({
@@ -245,27 +248,12 @@ router.post(
 
       const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
-      createTransporter()
-        .sendMail({
-          from: `"Exam Practice" <${process.env.EMAIL_USER}>`,
-          to: user.email,
-          subject: "Password Reset Request",
-          text: `Hi ${user.fullName},\n\nUse this link to reset your password. It expires in 1 hour:\n${resetUrl}\n\nIf you did not request this, ignore this email.`,
-          html: `
-            <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-              <h2 style="color: #0f172a;">Reset your password</h2>
-              <p style="color: #475569;">Hi ${escapeHtml(user.fullName)},</p>
-              <p style="color: #475569;">You requested a password reset. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
-              <a href="${resetUrl}" style="display:inline-block;margin:20px 0;padding:12px 24px;background:#185FA5;color:white;border-radius:8px;text-decoration:none;font-weight:600;">Reset Password</a>
-              <p style="color:#94a3b8;font-size:13px;">If you did not request this, you can safely ignore this email.</p>
-            </div>
-          `,
-        })
+      sendResetEmail(user, resetUrl)
         .then(() => {
           console.log(`Reset email sent to ${user.email}`);
         })
         .catch((mailError) => {
-          console.error("Reset email failed:", mailError);
+          console.error("Resend reset email failed:", mailError);
         });
     } catch (error) {
       console.error("Forgot password error:", error);
@@ -273,7 +261,7 @@ router.post(
         message: "Something went wrong. Please try again.",
       });
     }
-  },
+  }
 );
 
 router.post(
@@ -297,8 +285,7 @@ router.post(
 
       if (!user) {
         return res.status(400).json({
-          message:
-            "Reset link is invalid or has expired. Please request a new one.",
+          message: "Reset link is invalid or has expired. Please request a new one.",
         });
       }
 
@@ -314,7 +301,7 @@ router.post(
         message: "Something went wrong. Please try again.",
       });
     }
-  },
+  }
 );
 
 module.exports = router;
