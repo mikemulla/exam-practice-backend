@@ -47,26 +47,15 @@ function escapeHtml(value = "") {
 // FIXED: Complete production SMTP configuration with IPv4 support
 const createTransporter = () =>
   nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // Use STARTTLS, not SSL
-    requireTLS: true, // CRITICAL: Force TLS upgrade
-    family: 4, // CRITICAL: Force IPv4 (fixes ENETUNREACH on Render)
-    pool: {
-      maxConnections: 1,
-      maxMessages: 5,
-      rateDelta: 5000,
-      rateLimit: 3,
-    },
+    service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // Must be Gmail app password, not regular password
+      pass: process.env.EMAIL_PASS,
     },
-    tls: {
-      rejectUnauthorized: false, // Allow self-signed certs
-    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   });
-
 router.get(
   "/admin/all",
   verifyAdminToken,

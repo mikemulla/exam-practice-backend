@@ -86,26 +86,15 @@ const fileMeta = (file) => ({
 // FIXED: Complete production SMTP configuration with IPv4 support
 const createTransporter = () =>
   nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // Use STARTTLS, not SSL
-    requireTLS: true, // CRITICAL: Force TLS upgrade
-    family: 4, // CRITICAL: Force IPv4 (fixes ENETUNREACH on Render)
-    pool: {
-      maxConnections: 1,
-      maxMessages: 5,
-      rateDelta: 5000,
-      rateLimit: 3,
-    },
+    service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // Must be Gmail app password, not regular password
+      pass: process.env.EMAIL_PASS,
     },
-    tls: {
-      rejectUnauthorized: false, // Allow self-signed certs
-    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   });
-
 router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req);
@@ -151,12 +140,10 @@ router.post(
       const { subject, topic, timer } = req.body;
 
       if (!isMagicBytesAllowed(req.file)) {
-        return res
-          .status(400)
-          .json({
-            message:
-              "Uploaded file content does not match the selected file type.",
-          });
+        return res.status(400).json({
+          message:
+            "Uploaded file content does not match the selected file type.",
+        });
       }
 
       const savedRequest = await SubjectRequest.create({
@@ -188,12 +175,10 @@ router.post(
         console.error("Email failed. Request still saved:", mailError);
       }
 
-      res
-        .status(201)
-        .json({
-          message: "Request sent and saved successfully",
-          request: savedRequest,
-        });
+      res.status(201).json({
+        message: "Request sent and saved successfully",
+        request: savedRequest,
+      });
     } catch (error) {
       console.error("Subject request error:", error);
       res.status(500).json({ message: "Failed to send request" });
