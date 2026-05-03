@@ -3,7 +3,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const net = require("net");
 const User = require("../models/User");
 const Course = require("../models/Course");
 const TestResult = require("../models/TestResult");
@@ -45,49 +44,17 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
-// FIXED: Force IPv4 connection with custom socket handler (fixes Render IPv6 issue)
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // Use STARTTLS, not SSL
-    requireTLS: true, // Force TLS upgrade
-
-    // CRITICAL: Custom connection handler that forces IPv4 only
-    createConnection: (config, callback) => {
-      const socket = net.createConnection({
-        host: config.host,
-        port: config.port,
-        family: 4, // Force IPv4 ONLY (fixes ENETUNREACH on Render)
-        timeout: 10000,
-      });
-
-      socket.once("connect", () => {
-        console.log("✅ IPv4 SMTP connection established to", config.host);
-        callback(null, socket);
-      });
-
-      socket.once("timeout", () => {
-        socket.destroy();
-        console.error("❌ IPv4 SMTP connection timeout");
-        callback(new Error("SMTP connection timeout"));
-      });
-
-      socket.once("error", (err) => {
-        console.error("❌ IPv4 SMTP connection error:", err.message);
-        callback(err);
-      });
-    },
-
+const createTransporter = () =>
+  nodemailer.createTransport({
+    service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    tls: {
-      rejectUnauthorized: false,
-    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   });
-};
 
 router.get(
   "/admin/all",
@@ -96,6 +63,7 @@ router.get(
   async (req, res) => {
     try {
       const { page, limit, skip } = getPagination(req);
+
       const [users, total] = await Promise.all([
         User.find()
           .populate("courseId", "name")
@@ -208,6 +176,7 @@ router.post("/login", authLimiter, loginValidation, async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email }).populate("courseId", "name");
+
     if (!user) {
       await bcrypt.compare(
         password,
@@ -217,6 +186,7 @@ router.post("/login", authLimiter, loginValidation, async (req, res) => {
     }
 
     const passwordMatches = await bcrypt.compare(password, user.password);
+
     if (!passwordMatches) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
@@ -269,43 +239,39 @@ router.post(
       user.resetPasswordExpires = Date.now() + 60 * 60 * 1000;
       await user.save();
 
+      res.json({
+        message: "If that email exists, a reset link has been sent.",
+      });
+
       const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
-      try {
-        await createTransporter().sendMail({
+      createTransporter()
+        .sendMail({
           from: `"Exam Practice" <${process.env.EMAIL_USER}>`,
           to: user.email,
           subject: "Password Reset Request",
           text: `Hi ${user.fullName},\n\nUse this link to reset your password. It expires in 1 hour:\n${resetUrl}\n\nIf you did not request this, ignore this email.`,
           html: `
-          <div style = "font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-          <h2  style = "color: #0f172a;">Reset your password</h2>
-          <p   style = "color: #475569;">Hi ${escapeHtml(user.fullName)},           </p>
-          <p   style = "color: #475569;">You requested a password reset. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
-          <a   href  = "${resetUrl}" style                                         = "display:inline-block;margin:20px 0;padding:12px 24px;background:#185FA5;color:white;border-radius:8px;text-decoration:none;font-weight:600;">Reset Password</a>
-          <p   style = "color:#94a3b8;font-size:13px;">If you did not request this, you can safely ignore this email.</p>
-          </div>
-        `,
+            <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+              <h2 style="color: #0f172a;">Reset your password</h2>
+              <p style="color: #475569;">Hi ${escapeHtml(user.fullName)},</p>
+              <p style="color: #475569;">You requested a password reset. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+              <a href="${resetUrl}" style="display:inline-block;margin:20px 0;padding:12px 24px;background:#185FA5;color:white;border-radius:8px;text-decoration:none;font-weight:600;">Reset Password</a>
+              <p style="color:#94a3b8;font-size:13px;">If you did not request this, you can safely ignore this email.</p>
+            </div>
+          `,
+        })
+        .then(() => {
+          console.log(`Reset email sent to ${user.email}`);
+        })
+        .catch((mailError) => {
+          console.error("Reset email failed:", mailError);
         });
-        console.log(`✅ Reset email sent to ${user.email}`);
-      } catch (mailError) {
-        console.error("Reset email failed:", mailError);
-        user.resetPasswordToken = null;
-        user.resetPasswordExpires = null;
-        await user.save();
-        return res
-          .status(500)
-          .json({ message: "Failed to send reset email. Please try again." });
-      }
-
-      res.json({
-        message: "If that email exists, a reset link has been sent.",
-      });
     } catch (error) {
       console.error("Forgot password error:", error);
-      res
-        .status(500)
-        .json({ message: "Something went wrong. Please try again." });
+      res.status(500).json({
+        message: "Something went wrong. Please try again.",
+      });
     }
   },
 );
@@ -344,9 +310,9 @@ router.post(
       res.json({ message: "Password reset successfully. You can now log in." });
     } catch (error) {
       console.error("Reset password error:", error);
-      res
-        .status(500)
-        .json({ message: "Something went wrong. Please try again." });
+      res.status(500).json({
+        message: "Something went wrong. Please try again.",
+      });
     }
   },
 );

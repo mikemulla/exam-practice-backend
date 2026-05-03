@@ -1,7 +1,6 @@
 const express = require("express");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
-const net = require("net");
 const SubjectRequest = require("../models/SubjectRequest");
 const {
   verifyAdminToken,
@@ -53,13 +52,15 @@ function isMagicBytesAllowed(file) {
 
   if (file.mimetype === "application/pdf") return first5Text === "%PDF-";
   if (file.mimetype === "image/png") return first4 === "89504e47";
-  if (file.mimetype === "image/jpeg")
+  if (file.mimetype === "image/jpeg") {
     return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
   if (
     file.mimetype ===
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  )
+  ) {
     return first4 === "504b0304";
+  }
   if (file.mimetype === "application/msword") return first4 === "d0cf11e0";
   if (file.mimetype === "text/plain") return true;
 
@@ -84,49 +85,17 @@ const fileMeta = (file) => ({
   fileType: file?.mimetype ?? "",
 });
 
-// FIXED: Force IPv4 connection with custom socket handler (fixes Render IPv6 issue)
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // Use STARTTLS, not SSL
-    requireTLS: true, // Force TLS upgrade
-
-    // CRITICAL: Custom connection handler that forces IPv4 only
-    createConnection: (config, callback) => {
-      const socket = net.createConnection({
-        host: config.host,
-        port: config.port,
-        family: 4, // Force IPv4 ONLY (fixes ENETUNREACH on Render)
-        timeout: 10000,
-      });
-
-      socket.once("connect", () => {
-        console.log("✅ IPv4 SMTP connection established to", config.host);
-        callback(null, socket);
-      });
-
-      socket.once("timeout", () => {
-        socket.destroy();
-        console.error("❌ IPv4 SMTP connection timeout");
-        callback(new Error("SMTP connection timeout"));
-      });
-
-      socket.once("error", (err) => {
-        console.error("❌ IPv4 SMTP connection error:", err.message);
-        callback(err);
-      });
-    },
-
+const createTransporter = () =>
+  nodemailer.createTransport({
+    service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    tls: {
-      rejectUnauthorized: false,
-    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   });
-};
 
 router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
   try {
@@ -173,12 +142,10 @@ router.post(
       const { subject, topic, timer } = req.body;
 
       if (!isMagicBytesAllowed(req.file)) {
-        return res
-          .status(400)
-          .json({
-            message:
-              "Uploaded file content does not match the selected file type.",
-          });
+        return res.status(400).json({
+          message:
+            "Uploaded file content does not match the selected file type.",
+        });
       }
 
       const savedRequest = await SubjectRequest.create({
@@ -189,9 +156,14 @@ router.post(
         ...fileMeta(req.file),
       });
 
-      try {
-        await createTransporter().sendMail({
-          from: process.env.EMAIL_USER,
+      res.status(201).json({
+        message: "Request sent and saved successfully",
+        request: savedRequest,
+      });
+
+      createTransporter()
+        .sendMail({
+          from: `"Exam Practice" <${process.env.EMAIL_USER}>`,
           to: process.env.REQUEST_RECEIVER_EMAIL,
           subject: `New Subject Request: ${subject}`,
           text: `New subject request\nSubject: ${subject}\nTopic: ${topic}\nTimer: ${timer} minutes`,
@@ -205,16 +177,12 @@ router.post(
           attachments: req.file
             ? [{ filename: req.file.originalname, content: req.file.buffer }]
             : [],
-        });
-      } catch (mailError) {
-        console.error("Email failed. Request still saved:", mailError);
-      }
-
-      res
-        .status(201)
-        .json({
-          message: "Request sent and saved successfully",
-          request: savedRequest,
+        })
+        .then(() => {
+          console.log("Subject request email sent");
+        })
+        .catch((mailError) => {
+          console.error("Email failed. Request still saved:", mailError);
         });
     } catch (error) {
       console.error("Subject request error:", error);
@@ -237,6 +205,7 @@ router.put(
 
       if (!request)
         return res.status(404).json({ message: "Request not found" });
+
       res.json(request);
     } catch (error) {
       console.error("Review request error:", error);
@@ -252,8 +221,10 @@ router.delete(
   async (req, res) => {
     try {
       const request = await SubjectRequest.findByIdAndDelete(req.params.id);
+
       if (!request)
         return res.status(404).json({ message: "Request not found" });
+
       res.json({ message: "Request deleted successfully" });
     } catch (error) {
       console.error("Delete request error:", error);
@@ -264,13 +235,15 @@ router.delete(
 
 router.use((err, _req, res, _next) => {
   if (err.code === "LIMIT_FILE_SIZE") {
-    return res
-      .status(400)
-      .json({ message: "File too large. Maximum size is 15MB." });
+    return res.status(400).json({
+      message: "File too large. Maximum size is 15MB.",
+    });
   }
+
   if (err.message === "Unsupported file type") {
     return res.status(400).json({ message: "Unsupported file type." });
   }
+
   console.error("File upload error:", err);
   return res.status(500).json({ message: "File upload failed." });
 });
