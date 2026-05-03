@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
+const net = require("net");
 const SubjectRequest = require("../models/SubjectRequest");
 const {
   verifyAdminToken,
@@ -83,18 +84,50 @@ const fileMeta = (file) => ({
   fileType: file?.mimetype ?? "",
 });
 
-// FIXED: Complete production SMTP configuration with IPv4 support
-const createTransporter = () =>
-  nodemailer.createTransport({
-    service: "gmail",
+// FIXED: Force IPv4 connection with custom socket handler (fixes Render IPv6 issue)
+const createTransporter = () => {
+  return nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // Use STARTTLS, not SSL
+    requireTLS: true, // Force TLS upgrade
+
+    // CRITICAL: Custom connection handler that forces IPv4 only
+    createConnection: (config, callback) => {
+      const socket = net.createConnection({
+        host: config.host,
+        port: config.port,
+        family: 4, // Force IPv4 ONLY (fixes ENETUNREACH on Render)
+        timeout: 10000,
+      });
+
+      socket.once("connect", () => {
+        console.log("✅ IPv4 SMTP connection established to", config.host);
+        callback(null, socket);
+      });
+
+      socket.once("timeout", () => {
+        socket.destroy();
+        console.error("❌ IPv4 SMTP connection timeout");
+        callback(new Error("SMTP connection timeout"));
+      });
+
+      socket.once("error", (err) => {
+        console.error("❌ IPv4 SMTP connection error:", err.message);
+        callback(err);
+      });
+    },
+
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+    tls: {
+      rejectUnauthorized: false,
+    },
   });
+};
+
 router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req);
@@ -140,10 +173,12 @@ router.post(
       const { subject, topic, timer } = req.body;
 
       if (!isMagicBytesAllowed(req.file)) {
-        return res.status(400).json({
-          message:
-            "Uploaded file content does not match the selected file type.",
-        });
+        return res
+          .status(400)
+          .json({
+            message:
+              "Uploaded file content does not match the selected file type.",
+          });
       }
 
       const savedRequest = await SubjectRequest.create({
@@ -175,10 +210,12 @@ router.post(
         console.error("Email failed. Request still saved:", mailError);
       }
 
-      res.status(201).json({
-        message: "Request sent and saved successfully",
-        request: savedRequest,
-      });
+      res
+        .status(201)
+        .json({
+          message: "Request sent and saved successfully",
+          request: savedRequest,
+        });
     } catch (error) {
       console.error("Subject request error:", error);
       res.status(500).json({ message: "Failed to send request" });

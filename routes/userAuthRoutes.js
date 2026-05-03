@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
+const net = require("net");
 const User = require("../models/User");
 const Course = require("../models/Course");
 const TestResult = require("../models/TestResult");
@@ -44,18 +45,50 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
-// FIXED: Complete production SMTP configuration with IPv4 support
-const createTransporter = () =>
-  nodemailer.createTransport({
-    service: "gmail",
+// FIXED: Force IPv4 connection with custom socket handler (fixes Render IPv6 issue)
+const createTransporter = () => {
+  return nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // Use STARTTLS, not SSL
+    requireTLS: true, // Force TLS upgrade
+
+    // CRITICAL: Custom connection handler that forces IPv4 only
+    createConnection: (config, callback) => {
+      const socket = net.createConnection({
+        host: config.host,
+        port: config.port,
+        family: 4, // Force IPv4 ONLY (fixes ENETUNREACH on Render)
+        timeout: 10000,
+      });
+
+      socket.once("connect", () => {
+        console.log("✅ IPv4 SMTP connection established to", config.host);
+        callback(null, socket);
+      });
+
+      socket.once("timeout", () => {
+        socket.destroy();
+        console.error("❌ IPv4 SMTP connection timeout");
+        callback(new Error("SMTP connection timeout"));
+      });
+
+      socket.once("error", (err) => {
+        console.error("❌ IPv4 SMTP connection error:", err.message);
+        callback(err);
+      });
+    },
+
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+    tls: {
+      rejectUnauthorized: false,
+    },
   });
+};
+
 router.get(
   "/admin/all",
   verifyAdminToken,
