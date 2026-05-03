@@ -226,50 +226,93 @@ router.put(
     try {
       const request = await SubjectRequest.findById(req.params.id).populate({
         path: "userId",
-        select: "fullName email",
+        select: "fullName email courseId level",
+        populate: {
+          path: "courseId",
+          select: "name",
+        },
       });
 
       if (!request) {
         return res.status(404).json({ message: "Request not found" });
       }
 
+      const wasAlreadyReviewed = request.status === "reviewed";
+
       request.status = "reviewed";
       await request.save();
 
-      res.json({ message: "Request marked as reviewed", request });
+      res.json({
+        message: "Request marked as reviewed",
+        request,
+      });
 
-      // 🔥 SEND EMAIL AFTER RESPONSE
-      if (request.userId?.email) {
-        resend.emails
-          .send({
-            from: getEmailFrom(),
-            to: request.userId.email,
-            subject: "Your requested subject has been reviewed",
-            html: `
-            <div style = "font-family: sans-serif; max-width: 500px;">
-            <h2  style = "color:#0f172a;">Good news 🎉</h2>
-              <p>Hi ${escapeHtml(request.userId.fullName || "there")},</p>
-              
-              <p>Your request has been reviewed by the admin.</p>
+      if (wasAlreadyReviewed) return;
 
-              <p><strong>Subject:</strong> ${escapeHtml(request.subject)}</p>
-              <p><strong>Topic:</strong> ${escapeHtml(request.topic)}</p>
+      const recipientEmail = request.userId?.email;
 
-              <p>You can now check the platform to see updates.</p>
+      if (!recipientEmail) {
+        console.error("Review email not sent: request has no user email", {
+          requestId: request._id,
+          userId: request.userId?._id,
+        });
+        return;
+      }
 
-              <p style="margin-top:20px;color:#64748b;font-size:13px;">
-                If you did not request this, you can ignore this message.
+      resend.emails
+        .send({
+          from: getEmailFrom(),
+          to: recipientEmail,
+          subject: "Your subject request has been reviewed",
+          text: `Hi ${request.userId.fullName || "there"},
+
+Your subject request has been reviewed by the admin.
+
+Subject: ${request.subject}
+Topic  : ${request.topic}
+Course : ${request.userId.courseId?.name || "Not available"}
+Level  : ${request.userId.level || "Not available"}
+
+Please log in to check the platform.
+
+Thank you.`,
+          html: `
+            <div style = "font-family: sans-serif; max-width: 520px; margin: 0 auto;">
+            <h2  style = "color:#0f172a;">Your subject request has been reviewed</h2>
+
+              <p style = "color:#475569;">
+                Hi ${escapeHtml(request.userId.fullName || "there")},
+              </p>
+
+              <p style = "color:#475569;">
+                Your subject request has been reviewed by the admin.
+              </p>
+
+              <p><strong>Subject: </strong> ${escapeHtml(request.subject)}</p>
+              <p><strong>Topic  : </strong> ${escapeHtml(request.topic)}</p>
+              <p><strong>Course : </strong> ${escapeHtml(request.userId.courseId?.name || "Not available")}</p>
+              <p><strong>Level  : </strong> ${escapeHtml(request.userId.level || "Not available")}</p>
+
+              <p style = "color:#475569;">
+                Please log in to check the platform.
+              </p>
+
+              <p style = "color:#94a3b8;font-size:13px;">
+                If you did not make this request, you can ignore this email.
               </p>
             </div>
           `,
-          })
-          .then(() => {
-            console.log("Review email sent to user");
-          })
-          .catch((err) => {
-            console.error("Failed to send review email:", err);
+        })
+        .then(() => {
+          console.log(`Review email sent to ${recipientEmail}`);
+        })
+        .catch((mailError) => {
+          console.error("Review email failed:", {
+            requestId: request._id,
+            recipientEmail,
+            error: mailError,
           });
-      }
+        });
     } catch (error) {
       console.error("Review request error:", error);
       res.status(500).json({ message: "Failed to update request" });
@@ -285,8 +328,9 @@ router.delete(
     try {
       const request = await SubjectRequest.findByIdAndDelete(req.params.id);
 
-      if (!request)
+      if (!request) {
         return res.status(404).json({ message: "Request not found" });
+      }
 
       res.json({ message: "Request deleted successfully" });
     } catch (error) {
