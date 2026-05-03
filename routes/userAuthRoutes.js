@@ -44,17 +44,14 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
-// FIXED: Correct TLS configuration for production environments (Render, Heroku, etc)
-// - port 587: STARTTLS (upgrade connection to TLS after SMTP hello)
-// - secure: false: Don't use SSL immediately, use STARTTLS instead
-// - requireTLS: true: CRITICAL - Force TLS upgrade, fails if TLS unavailable
-// FIXED: Complete production SMTP configuration
+// FIXED: Complete production SMTP configuration with IPv4 support
 const createTransporter = () =>
   nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
     secure: false, // Use STARTTLS, not SSL
     requireTLS: true, // CRITICAL: Force TLS upgrade
+    family: 4, // CRITICAL: Force IPv4 (fixes ENETUNREACH on Render)
     pool: {
       maxConnections: 1,
       maxMessages: 5,
@@ -325,7 +322,6 @@ router.post(
       res.json({ message: "Password reset successfully. You can now log in." });
     } catch (error) {
       console.error("Reset password error:", error);
-      // FIXED: Changed 'ress' to 'res' (typo)
       res
         .status(500)
         .json({ message: "Something went wrong. Please try again." });
