@@ -112,10 +112,10 @@ async function sendSubjectRequestEmail({ subject, topic, timer, file }) {
     text: `New subject request\nSubject: ${subject}\nTopic: ${topic}\nTimer: ${timer} minutes`,
     html: `
       <h2>New Subject Request</h2>
-      <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
-      <p><strong>Topic:</strong> ${escapeHtml(topic)}</p>
-      <p><strong>Timer:</strong> ${escapeHtml(timer)} minutes</p>
-      <p><strong>Status:</strong> Saved to admin inbox</p>
+      <p><strong>Subject: </strong> ${escapeHtml(subject)}</p>
+      <p><strong>Topic  : </strong> ${escapeHtml(topic)}</p>
+      <p><strong>Timer  : </strong> ${escapeHtml(timer)} minutes</p>
+      <p><strong>Status : </strong> Saved to admin inbox</p>
     `,
     attachments: file
       ? [
@@ -142,6 +142,14 @@ router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
 
     const [requests, total] = await Promise.all([
       SubjectRequest.find(query)
+        .populate({
+          path: "userId",
+          select: "fullName email courseId level",
+          populate: {
+            path: "courseId",
+            select: "name",
+          },
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -174,7 +182,8 @@ router.post(
 
       if (!isMagicBytesAllowed(req.file)) {
         return res.status(400).json({
-          message: "Uploaded file content does not match the selected file type.",
+          message:
+            "Uploaded file content does not match the selected file type.",
         });
       }
 
@@ -196,49 +205,67 @@ router.post(
         topic,
         timer,
         file: req.file,
-      })
-        .then(() => {
-          console.log("Subject request notification sent");
-        })
-        .catch((mailError) => {
-          console.error("Resend subject request email failed. Request still saved:", mailError);
-        });
+      }).catch((mailError) => {
+        console.error(
+          "Resend subject request email failed. Request still saved:",
+          mailError,
+        );
+      });
     } catch (error) {
       console.error("Subject request error:", error);
       res.status(500).json({ message: "Failed to send request" });
     }
-  }
+  },
 );
 
-router.put("/:id/reviewed", verifyAdminToken, validObjectId("id"), async (req, res) => {
-  try {
-    const request = await SubjectRequest.findByIdAndUpdate(
-      req.params.id,
-      { status: "reviewed" },
-      { returnDocument: "after" }
-    );
+router.put(
+  "/:id/reviewed",
+  verifyAdminToken,
+  validObjectId("id"),
+  async (req, res) => {
+    try {
+      const request = await SubjectRequest.findByIdAndUpdate(
+        req.params.id,
+        { status: "reviewed" },
+        { returnDocument: "after" },
+      ).populate({
+        path: "userId",
+        select: "fullName email courseId level",
+        populate: {
+          path: "courseId",
+          select: "name",
+        },
+      });
 
-    if (!request) return res.status(404).json({ message: "Request not found" });
+      if (!request)
+        return res.status(404).json({ message: "Request not found" });
 
-    res.json(request);
-  } catch (error) {
-    console.error("Review request error:", error);
-    res.status(500).json({ message: "Failed to update request" });
-  }
-});
+      res.json(request);
+    } catch (error) {
+      console.error("Review request error:", error);
+      res.status(500).json({ message: "Failed to update request" });
+    }
+  },
+);
 
-router.delete("/:id", verifyAdminToken, validObjectId("id"), async (req, res) => {
-  try {
-    const request = await SubjectRequest.findByIdAndDelete(req.params.id);
+router.delete(
+  "/:id",
+  verifyAdminToken,
+  validObjectId("id"),
+  async (req, res) => {
+    try {
+      const request = await SubjectRequest.findByIdAndDelete(req.params.id);
 
-    if (!request) return res.status(404).json({ message: "Request not found" });
+      if (!request)
+        return res.status(404).json({ message: "Request not found" });
 
-    res.json({ message: "Request deleted successfully" });
-  } catch (error) {
-    console.error("Delete request error:", error);
-    res.status(500).json({ message: "Failed to delete request" });
-  }
-});
+      res.json({ message: "Request deleted successfully" });
+    } catch (error) {
+      console.error("Delete request error:", error);
+      res.status(500).json({ message: "Failed to delete request" });
+    }
+  },
+);
 
 router.use((err, _req, res, _next) => {
   if (err.code === "LIMIT_FILE_SIZE") {
