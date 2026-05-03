@@ -224,23 +224,52 @@ router.put(
   validObjectId("id"),
   async (req, res) => {
     try {
-      const request = await SubjectRequest.findByIdAndUpdate(
-        req.params.id,
-        { status: "reviewed" },
-        { returnDocument: "after" },
-      ).populate({
+      const request = await SubjectRequest.findById(req.params.id).populate({
         path: "userId",
-        select: "fullName email courseId level",
-        populate: {
-          path: "courseId",
-          select: "name",
-        },
+        select: "fullName email",
       });
 
-      if (!request)
+      if (!request) {
         return res.status(404).json({ message: "Request not found" });
+      }
 
-      res.json(request);
+      request.status = "reviewed";
+      await request.save();
+
+      res.json({ message: "Request marked as reviewed", request });
+
+      // 🔥 SEND EMAIL AFTER RESPONSE
+      if (request.userId?.email) {
+        resend.emails
+          .send({
+            from: getEmailFrom(),
+            to: request.userId.email,
+            subject: "Your requested subject has been reviewed",
+            html: `
+            <div style = "font-family: sans-serif; max-width: 500px;">
+            <h2  style = "color:#0f172a;">Good news 🎉</h2>
+              <p>Hi ${escapeHtml(request.userId.fullName || "there")},</p>
+              
+              <p>Your request has been reviewed by the admin.</p>
+
+              <p><strong>Subject:</strong> ${escapeHtml(request.subject)}</p>
+              <p><strong>Topic:</strong> ${escapeHtml(request.topic)}</p>
+
+              <p>You can now check the platform to see updates.</p>
+
+              <p style="margin-top:20px;color:#64748b;font-size:13px;">
+                If you did not request this, you can ignore this message.
+              </p>
+            </div>
+          `,
+          })
+          .then(() => {
+            console.log("Review email sent to user");
+          })
+          .catch((err) => {
+            console.error("Failed to send review email:", err);
+          });
+      }
     } catch (error) {
       console.error("Review request error:", error);
       res.status(500).json({ message: "Failed to update request" });
