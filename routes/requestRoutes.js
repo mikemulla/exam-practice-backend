@@ -42,12 +42,8 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
-function getRequestReceiverEmail() {
-  return process.env.REQUEST_RECEIVER_EMAIL || process.env.EMAIL_USER;
-}
-
 function isMagicBytesAllowed(file) {
-  if (!file) return true;
+  if (!file) return false;
 
   const buffer = file.buffer;
   if (!buffer || buffer.length < 4) return file.mimetype === "text/plain";
@@ -60,14 +56,12 @@ function isMagicBytesAllowed(file) {
   if (file.mimetype === "image/jpeg") {
     return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
   }
-
   if (
     file.mimetype ===
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ) {
     return first4 === "504b0304";
   }
-
   if (file.mimetype === "application/msword") return first4 === "d0cf11e0";
   if (file.mimetype === "text/plain") return true;
 
@@ -92,25 +86,22 @@ const fileMeta = (file) => ({
   fileType: file?.mimetype ?? "",
 });
 
-async function sendSubjectRequestEmail({ subject, topic, timer, file, user }) {
+function getRequestReceiverEmail() {
+  return process.env.REQUEST_RECEIVER_EMAIL || process.env.EMAIL_USER;
+}
+
+async function sendSubjectRequestEmail({ subject, topic, timer, file }) {
   const to = getRequestReceiverEmail();
 
   if (!to) {
     throw new Error("REQUEST_RECEIVER_EMAIL is not configured");
   }
 
-  const submittedBy = user?.email
-    ? `${user.fullName || "Unknown user"} (${user.email})`
-    : "Unknown user";
-
   return sendEmail({
     to,
     subject: `New Subject Request: ${subject}`,
     text: `New subject request
 
-Submitted by: ${submittedBy}
-Course: ${user?.courseId?.name || "Not available"}
-Level: ${user?.level || "Not available"}
 Subject: ${subject}
 Topic: ${topic}
 Timer: ${timer} minutes
@@ -119,9 +110,6 @@ Status: Saved to admin inbox`,
     html: `
       <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto;">
         <h2 style="color:#0f172a;">New Subject Request</h2>
-        <p><strong>Submitted by:</strong> ${escapeHtml(submittedBy)}</p>
-        <p><strong>Course:</strong> ${escapeHtml(user?.courseId?.name || "Not available")}</p>
-        <p><strong>Level:</strong> ${escapeHtml(user?.level || "Not available")}</p>
         <p><strong>Subject:</strong> ${escapeHtml(subject)}</p>
         <p><strong>Topic:</strong> ${escapeHtml(topic)}</p>
         <p><strong>Timer:</strong> ${escapeHtml(timer)} minutes</p>
@@ -148,7 +136,6 @@ router.get("/", verifyAdminToken, paginationValidation, async (req, res) => {
       if (!["pending", "reviewed"].includes(req.query.status)) {
         return res.status(400).json({ message: "Invalid status" });
       }
-
       query.status = req.query.status;
     }
 
@@ -192,10 +179,15 @@ router.post(
     try {
       const { subject, topic, timer } = req.body;
 
+      if (!req.file) {
+        return res.status(400).json({
+          message: "Reference file is required.",
+        });
+      }
+
       if (!isMagicBytesAllowed(req.file)) {
         return res.status(400).json({
-          message:
-            "Uploaded file content does not match the selected file type.",
+          message: "Uploaded file content does not match the selected file type.",
         });
       }
 
@@ -212,34 +204,20 @@ router.post(
         request: savedRequest,
       });
 
-      SubjectRequest.findById(savedRequest._id)
-        .populate({
-          path: "userId",
-          select: "fullName email courseId level",
-          populate: {
-            path: "courseId",
-            select: "name",
-          },
-        })
-        .then((populatedRequest) =>
-          sendSubjectRequestEmail({
-            subject,
-            topic,
-            timer,
-            file: req.file,
-            user: populatedRequest?.userId,
-          }),
-        )
+      sendSubjectRequestEmail({
+        subject,
+        topic,
+        timer,
+        file: req.file,
+      })
         .then(() => {
-          console.log(
-            `Subject request email sent to ${getRequestReceiverEmail()}`,
-          );
+          console.log(`Subject request email sent to ${getRequestReceiverEmail()}`);
         })
         .catch((mailError) => {
-          console.error(
-            "Brevo subject request email failed. Request still saved:",
-            mailError,
-          );
+          console.error("Brevo subject request email failed. Request still saved:", {
+            requestId: savedRequest._id,
+            error: mailError,
+          });
         });
     } catch (error) {
       console.error("Subject request error:", error);
@@ -291,42 +269,42 @@ router.put(
 
       sendEmail({
         to: recipientEmail,
-        subject: "🎉 Your subject request has been reviewed!",
-        text: `Hurray! 🎊
+        subject: "Your subject request has been reviewed",
+        text: `Hi ${request.userId.fullName || "there"},
 
-Your subject request has been reviewed by the admin!
+Your subject request has been reviewed by the admin.
 
 Subject: ${request.subject}
 Topic: ${request.topic}
 Course: ${request.userId.courseId?.name || "Not available"}
 Level: ${request.userId.level || "Not available"}
 
-Head over to the platform to check out what's next! 🚀
+Please log in to check the platform.
 
-Thank you!`,
+Thank you.`,
         html: `
-          <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; text-align: center;">
-            <h1 style="color:#10b981; font-size: 36px; margin: 20px 0;">🎉 Hurray! 🎊</h1>
-            
-            <h2 style="color:#0f172a;">Your subject request has been reviewed!</h2>
+          <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto;">
+            <h2 style="color:#0f172a;">Your subject request has been reviewed</h2>
 
-            <p style="color:#475569; font-size: 16px; margin: 20px 0;">
-              Hi ${escapeHtml(request.userId.fullName || "there")} 👋
+            <p style="color:#475569;">
+              Hi ${escapeHtml(request.userId.fullName || "there")},
             </p>
 
-            <div style="background: #f0fdf4; border-left: 4px solid #10b981; padding: 15px; margin: 20px 0; text-align: left;">
-              <p><strong>📚 Subject:</strong> ${escapeHtml(request.subject)}</p>
-              <p><strong>🎯 Topic:</strong> ${escapeHtml(request.topic)}</p>
-              <p><strong>📖 Course:</strong> ${escapeHtml(request.userId.courseId?.name || "Not available")}</p>
-              <p><strong>📊 Level:</strong> ${escapeHtml(request.userId.level || "Not available")}</p>
-            </div>
-
-            <p style="color:#475569; font-size: 16px; margin: 20px 0;">
-              Log in now to check out what's next! 🚀
+            <p style="color:#475569;">
+              Your subject request has been reviewed by the admin.
             </p>
 
-            <p style="color:#94a3b8;font-size:13px; margin-top: 30px;">
-              ✨ Thanks for being awesome! ✨
+            <p><strong>Subject:</strong> ${escapeHtml(request.subject)}</p>
+            <p><strong>Topic:</strong> ${escapeHtml(request.topic)}</p>
+            <p><strong>Course:</strong> ${escapeHtml(request.userId.courseId?.name || "Not available")}</p>
+            <p><strong>Level:</strong> ${escapeHtml(request.userId.level || "Not available")}</p>
+
+            <p style="color:#475569;">
+              Please log in to check the platform.
+            </p>
+
+            <p style="color:#94a3b8;font-size:13px;">
+              If you did not make this request, you can ignore this email.
             </p>
           </div>
         `,
