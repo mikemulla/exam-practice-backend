@@ -39,6 +39,26 @@ const questionSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+
+    // Optional question image stored directly in MongoDB as base64.
+    // Field names used by frontend and test page:
+    // imageData + imageContentType
+    imageData: {
+      type: String,
+      default: "",
+    },
+    imageContentType: {
+      type: String,
+      default: "",
+    },
+    imageOriginalName: {
+      type: String,
+      default: "",
+    },
+    imageSize: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true },
 );

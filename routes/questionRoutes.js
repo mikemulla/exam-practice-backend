@@ -1,13 +1,15 @@
 const express = require("express");
 const mongoose = require("mongoose");
+const multer = require("multer");
+
 const Question = require("../models/Question");
 const Topic = require("../models/Topic");
 const Subject = require("../models/Subject");
 const User = require("../models/User");
+
 const { verifyAdminToken, verifyUserToken } = require("../middleware/authMiddleware");
 const { adminLimiter } = require("../middleware/rateLimiter");
 const {
-  questionValidation,
   bulkQuestionValidation,
   validObjectId,
   paginationValidation,
@@ -15,10 +17,133 @@ const {
 
 const router = express.Router();
 
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+const uploadQuestionImage = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_IMAGE_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Unsupported image type. Upload JPG, PNG, or WEBP only."), false);
+    }
+  },
+});
+
 function getPagination(req) {
   const page = Math.max(Number(req.query.page || 1), 1);
   const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 100);
   return { page, limit, skip: (page - 1) * limit };
+}
+
+function parseJsonField(value, fallback) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return fallback;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function cleanString(value) {
+  return String(value || "").trim();
+}
+
+function buildImagePayload(file) {
+  if (!file) {
+    return {
+      imageData: "",
+      imageContentType: "",
+      imageOriginalName: "",
+      imageSize: 0,
+    };
+  }
+
+  return {
+    imageData: file.buffer.toString("base64"),
+    imageContentType: file.mimetype,
+    imageOriginalName: file.originalname,
+    imageSize: file.size,
+  };
+}
+
+function isImageMagicBytesAllowed(file) {
+  if (!file) return true;
+
+  const buffer = file.buffer;
+  if (!buffer || buffer.length < 12) return false;
+
+  if (file.mimetype === "image/jpeg") {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+
+  if (file.mimetype === "image/png") {
+    return buffer.subarray(0, 4).toString("hex").toLowerCase() === "89504e47";
+  }
+
+  if (file.mimetype === "image/webp") {
+    return (
+      buffer.subarray(0, 4).toString("utf8") === "RIFF" &&
+      buffer.subarray(8, 12).toString("utf8") === "WEBP"
+    );
+  }
+
+  return false;
+}
+
+function validateQuestionPayload({ subjectId, topicId, questionText, options, correctAnswer, explanation }) {
+  if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+    return "Subject is required";
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(topicId)) {
+    return "Topic is required";
+  }
+
+  if (!cleanString(questionText)) {
+    return "Question text is required";
+  }
+
+  if (cleanString(questionText).length > 2000) {
+    return "Question too long";
+  }
+
+  if (!Array.isArray(options) || options.length < 2 || options.length > 6) {
+    return "Provide between 2 and 6 options";
+  }
+
+  const cleanedOptions = options.map((option) => cleanString(option)).filter(Boolean);
+
+  if (cleanedOptions.length !== options.length || cleanedOptions.length < 2) {
+    return "All options must be non-empty strings";
+  }
+
+  if (!cleanString(correctAnswer)) {
+    return "Correct answer is required";
+  }
+
+  if (!cleanedOptions.includes(cleanString(correctAnswer))) {
+    return "Correct answer must match one of the options";
+  }
+
+  if (!cleanString(explanation)) {
+    return "Explanation is required";
+  }
+
+  if (cleanString(explanation).length > 3000) {
+    return "Explanation too long";
+  }
+
+  return null;
 }
 
 async function validateQuestionRelationship(subjectId, topicId) {
@@ -36,9 +161,63 @@ async function validateQuestionRelationship(subjectId, topicId) {
   return { ok: true };
 }
 
-router.post("/", verifyAdminToken, questionValidation, async (req, res) => {
+// TEMP DEBUG ROUTE: remove after confirming images are saving.
+router.get("/debug-images", async (_req, res) => {
   try {
-    const { subjectId, topicId, questionText, options, correctAnswer, explanation } = req.body;
+    const questions = await Question.find()
+      .select("questionText imageData imageContentType imageOriginalName imageSize")
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    res.json(
+      questions.map((q) => ({
+        id: q._id,
+        questionText: q.questionText,
+        hasImageData: !!q.imageData,
+        imageContentType: q.imageContentType || null,
+        imageOriginalName: q.imageOriginalName || null,
+        imageSize: q.imageSize || 0,
+        imageDataLength: q.imageData ? q.imageData.length : 0,
+      })),
+    );
+  } catch (error) {
+    console.error("Debug images error:", error);
+    res.status(500).json({ message: "Failed to debug question images" });
+  }
+});
+
+router.post("/", verifyAdminToken, uploadQuestionImage.single("image"), async (req, res) => {
+  try {
+    const subjectId = cleanString(req.body.subjectId);
+    const topicId = cleanString(req.body.topicId);
+    const questionText = cleanString(req.body.questionText);
+    const options = parseJsonField(req.body.options, []);
+    const correctAnswer = cleanString(req.body.correctAnswer);
+    const explanation = cleanString(req.body.explanation);
+
+    console.log("QUESTION IMAGE DEBUG:", {
+      hasFile: !!req.file,
+      fileName: req.file?.originalname,
+      mimeType: req.file?.mimetype,
+      size: req.file?.size,
+    });
+
+    if (req.file && !isImageMagicBytesAllowed(req.file)) {
+      return res.status(400).json({ message: "Uploaded image content does not match the selected image type." });
+    }
+
+    const validationError = validateQuestionPayload({
+      subjectId,
+      topicId,
+      questionText,
+      options,
+      correctAnswer,
+      explanation,
+    });
+
+    if (validationError) {
+      return res.status(400).json({ message: validationError });
+    }
 
     const relationship = await validateQuestionRelationship(subjectId, topicId);
     if (!relationship.ok) {
@@ -48,10 +227,11 @@ router.post("/", verifyAdminToken, questionValidation, async (req, res) => {
     const question = await Question.create({
       subjectId,
       topicId,
-      questionText: questionText.trim(),
-      options: options.map((option) => option.trim()),
-      correctAnswer: correctAnswer.trim(),
-      explanation: explanation.trim(),
+      questionText,
+      options: options.map((option) => cleanString(option)),
+      correctAnswer,
+      explanation,
+      ...buildImagePayload(req.file),
     });
 
     res.status(201).json(question);
@@ -70,7 +250,7 @@ router.post("/bulk", verifyAdminToken, adminLimiter, bulkQuestionValidation, asy
       return res.status(400).json({ message: "Subject not found" });
     }
 
-    const topicIds = [...new Set(questions.map((question) => String(question.topicId)) )];
+    const topicIds = [...new Set(questions.map((question) => String(question.topicId)))];
     const topics = await Topic.find({ _id: { $in: topicIds }, subjectId }).select("_id");
     const validTopicIds = new Set(topics.map((topic) => topic._id.toString()));
 
@@ -86,6 +266,10 @@ router.post("/bulk", verifyAdminToken, adminLimiter, bulkQuestionValidation, asy
       options: question.options.map((option) => String(option).trim()).filter(Boolean),
       correctAnswer: question.correctAnswer.trim(),
       explanation: question.explanation.trim(),
+      imageData: "",
+      imageContentType: "",
+      imageOriginalName: "",
+      imageSize: 0,
     }));
 
     const savedQuestions = await Question.insertMany(formattedQuestions, { ordered: true });
@@ -222,25 +406,57 @@ router.get("/:id", verifyAdminToken, validObjectId("id"), async (req, res) => {
   }
 });
 
-router.put("/:id", verifyAdminToken, validObjectId("id"), questionValidation, async (req, res) => {
+router.put("/:id", verifyAdminToken, validObjectId("id"), uploadQuestionImage.single("image"), async (req, res) => {
   try {
-    const { subjectId, topicId, questionText, options, correctAnswer, explanation } = req.body;
+    const subjectId = cleanString(req.body.subjectId);
+    const topicId = cleanString(req.body.topicId);
+    const questionText = cleanString(req.body.questionText);
+    const options = parseJsonField(req.body.options, []);
+    const correctAnswer = cleanString(req.body.correctAnswer);
+    const explanation = cleanString(req.body.explanation);
+
+    if (req.file && !isImageMagicBytesAllowed(req.file)) {
+      return res.status(400).json({ message: "Uploaded image content does not match the selected image type." });
+    }
+
+    const validationError = validateQuestionPayload({
+      subjectId,
+      topicId,
+      questionText,
+      options,
+      correctAnswer,
+      explanation,
+    });
+
+    if (validationError) {
+      return res.status(400).json({ message: validationError });
+    }
 
     const relationship = await validateQuestionRelationship(subjectId, topicId);
     if (!relationship.ok) {
       return res.status(relationship.status).json({ message: relationship.message });
     }
 
+    const updatePayload = {
+      subjectId,
+      topicId,
+      questionText,
+      options: options.map((option) => cleanString(option)),
+      correctAnswer,
+      explanation,
+    };
+
+    if (req.file) {
+      Object.assign(updatePayload, buildImagePayload(req.file));
+    }
+
+    if (req.body.removeImage === "true") {
+      Object.assign(updatePayload, buildImagePayload(null));
+    }
+
     const updatedQuestion = await Question.findByIdAndUpdate(
       req.params.id,
-      {
-        subjectId,
-        topicId,
-        questionText: questionText.trim(),
-        options: options.map((option) => option.trim()),
-        correctAnswer: correctAnswer.trim(),
-        explanation: explanation.trim(),
-      },
+      updatePayload,
       { new: true, runValidators: true },
     );
 
@@ -261,6 +477,19 @@ router.delete("/:id", verifyAdminToken, validObjectId("id"), async (req, res) =>
     console.error("Delete question error:", error);
     res.status(500).json({ message: "Failed to delete question" });
   }
+});
+
+router.use((err, _req, res, _next) => {
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ message: "Image too large. Maximum size is 5MB." });
+  }
+
+  if (err.message === "Unsupported image type. Upload JPG, PNG, or WEBP only.") {
+    return res.status(400).json({ message: err.message });
+  }
+
+  console.error("Question upload error:", err);
+  return res.status(500).json({ message: "Question image upload failed." });
 });
 
 module.exports = router;
