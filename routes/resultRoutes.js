@@ -4,8 +4,14 @@ const TestResult = require("../models/TestResult");
 const Subject = require("../models/Subject");
 const Topic = require("../models/Topic");
 const User = require("../models/User");
-const { verifyUserToken } = require("../middleware/authMiddleware");
-const { resultValidation, paginationValidation } = require("../middleware/validators");
+const {
+  verifyUserToken,
+  verifyAdminToken,
+} = require("../middleware/authMiddleware");
+const {
+  resultValidation,
+  paginationValidation,
+} = require("../middleware/validators");
 
 const router = express.Router();
 
@@ -50,13 +56,17 @@ router.post("/", verifyUserToken, resultValidation, async (req, res) => {
     });
 
     if (!subject) {
-      return res.status(403).json({ message: "You are not allowed to save a result for this subject" });
+      return res.status(403).json({
+        message: "You are not allowed to save a result for this subject",
+      });
     }
 
     if (topicId) {
       const topic = await Topic.findOne({ _id: topicId, subjectId });
       if (!topic) {
-        return res.status(400).json({ message: "Topic does not belong to selected subject" });
+        return res.status(400).json({
+          message: "Topic does not belong to selected subject",
+        });
       }
     }
 
@@ -77,6 +87,49 @@ router.post("/", verifyUserToken, resultValidation, async (req, res) => {
   }
 });
 
+router.get(
+  "/admin/recent-activity",
+  verifyAdminToken,
+  paginationValidation,
+  async (req, res) => {
+    try {
+      const { page, limit, skip } = getPagination(req);
+
+      const [activities, total] = await Promise.all([
+        TestResult.find()
+          .populate({
+            path: "userId",
+            select: "fullName email level courseId",
+            populate: {
+              path: "courseId",
+              select: "name",
+            },
+          })
+          .populate("subjectId", "name")
+          .populate("topicId", "name")
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit),
+        TestResult.countDocuments(),
+      ]);
+
+      res.json({
+        data: activities,
+        activities,
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      console.error("Admin recent activity error:", error);
+      res.status(500).json({
+        message: "Failed to fetch recent activity",
+      });
+    }
+  },
+);
+
 router.get("/me", verifyUserToken, paginationValidation, async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req);
@@ -91,7 +144,14 @@ router.get("/me", verifyUserToken, paginationValidation, async (req, res) => {
       TestResult.countDocuments({ userId: req.userId }),
     ]);
 
-    res.json({ data: results, results, page, limit, total, totalPages: Math.ceil(total / limit) });
+    res.json({
+      data: results,
+      results,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    });
   } catch (error) {
     console.error("Error fetching results:", error);
     res.status(500).json({ message: "Failed to fetch results" });
@@ -119,7 +179,11 @@ router.get("/me/summary", verifyUserToken, async (req, res) => {
         {
           $project: {
             percent: {
-              $cond: [{ $gt: ["$total", 0] }, { $multiply: [{ $divide: ["$score", "$total"] }, 100] }, 0],
+              $cond: [
+                { $gt: ["$total", 0] },
+                { $multiply: [{ $divide: ["$score", "$total"] }, 100] },
+                0,
+              ],
             },
           },
         },
@@ -129,7 +193,12 @@ router.get("/me/summary", verifyUserToken, async (req, res) => {
         { $match: { userId: userObjectId } },
         {
           $group: {
-            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            _id: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$createdAt",
+              },
+            },
           },
         },
         { $sort: { _id: -1 } },
@@ -156,10 +225,21 @@ router.get("/me/summary", verifyUserToken, async (req, res) => {
       ]),
     ]);
 
-    const totals = totalsRows[0] || { totalTests: 0, totalQuestions: 0, totalCorrect: 0 };
-    const avgScore = totals.totalQuestions > 0 ? Math.round((totals.totalCorrect / totals.totalQuestions) * 100) : 0;
+    const totals = totalsRows[0] || {
+      totalTests: 0,
+      totalQuestions: 0,
+      totalCorrect: 0,
+    };
+
+    const avgScore =
+      totals.totalQuestions > 0
+        ? Math.round((totals.totalCorrect / totals.totalQuestions) * 100)
+        : 0;
+
     const best = bestRows[0]?.best ? Math.round(bestRows[0].best) : 0;
-    const streak = calculateStreakFromDateStrings(dayRows.map((row) => row._id));
+    const streak = calculateStreakFromDateStrings(
+      dayRows.map((row) => row._id),
+    );
 
     const bySubject = {};
     bySubjectRows.forEach((row) => {
