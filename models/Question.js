@@ -24,7 +24,9 @@ const questionSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator(options) {
-          return Array.isArray(options) && options.length >= 2 && options.length <= 6;
+          return (
+            Array.isArray(options) && options.length >= 2 && options.length <= 6
+          );
         },
         message: "Provide between 2 and 6 options",
       },
@@ -63,6 +65,8 @@ const questionSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-questionSchema.index({ subjectId: 1, topicId: 1 });
+questionSchema.index({ subjectId: 1, topicId: 1, createdAt: -1, _id: -1 });
+questionSchema.index({ subjectId: 1, createdAt: -1, _id: -1 });
+questionSchema.index({ topicId: 1, createdAt: -1, _id: -1 });
 
 module.exports = mongoose.model("Question", questionSchema);
