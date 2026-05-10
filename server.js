@@ -58,6 +58,7 @@ const authRoutes = require("./routes/authRoutes");
 const courseRoutes = require("./routes/courseRoutes");
 const userAuthRoutes = require("./routes/userAuthRoutes");
 const resultRoutes = require("./routes/resultRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/topics", topicRoutes);
@@ -67,6 +68,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/users", userAuthRoutes);
 app.use("/api/results", resultRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
