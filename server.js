@@ -59,6 +59,7 @@ const courseRoutes = require("./routes/courseRoutes");
 const userAuthRoutes = require("./routes/userAuthRoutes");
 const resultRoutes = require("./routes/resultRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const badgeRoutes = require("./routes/badgeRoutes");
 
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/topics", topicRoutes);
@@ -69,6 +70,7 @@ app.use("/api/courses", courseRoutes);
 app.use("/api/users", userAuthRoutes);
 app.use("/api/results", resultRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/badges", badgeRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

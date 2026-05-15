@@ -4,6 +4,7 @@ const TestResult = require("../models/TestResult");
 const Subject = require("../models/Subject");
 const Topic = require("../models/Topic");
 const User = require("../models/User");
+const Badge = require("../models/Badge");
 const {
   verifyUserToken,
   verifyAdminToken,
@@ -14,6 +15,75 @@ const {
 } = require("../middleware/validators");
 
 const router = express.Router();
+
+const BADGES = [
+  {
+    key: "first_test",
+    title: "First Test Completed",
+    icon: "🏁",
+    description: "Completed your first practice test",
+    check: ({ totalTests }) => totalTests >= 1,
+  },
+  {
+    key: "hundred_questions",
+    title: "100 Questions Answered",
+    icon: "🧠",
+    description: "Answered 100 questions",
+    check: ({ totalQuestions }) => totalQuestions >= 100,
+  },
+  {
+    key: "perfect_score",
+    title: "Perfect Score",
+    icon: "🎯",
+    description: "Scored 100% in a test",
+    check: ({ score, total }) => total > 0 && score === total,
+  },
+];
+
+async function unlockBadges({ userId, score, total }) {
+  const [totalTests, totalQuestionsRow, existingBadges] = await Promise.all([
+    TestResult.countDocuments({ userId }),
+    TestResult.aggregate([
+      { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$total" },
+        },
+      },
+    ]),
+    Badge.find({ userId }),
+  ]);
+
+  const existingKeys = new Set(existingBadges.map((badge) => badge.key));
+
+  const context = {
+    score,
+    total,
+    totalTests,
+    totalQuestions: totalQuestionsRow?.[0]?.total || 0,
+  };
+
+  const unlocked = [];
+
+  for (const badge of BADGES) {
+    if (existingKeys.has(badge.key)) continue;
+
+    if (badge.check(context)) {
+      const created = await Badge.create({
+        userId,
+        key: badge.key,
+        title: badge.title,
+        icon: badge.icon,
+        description: badge.description,
+      });
+
+      unlocked.push(created);
+    }
+  }
+
+  return unlocked;
+}
 
 function getPagination(req) {
   const page = Math.max(Number(req.query.page || 1), 1);
@@ -80,7 +150,16 @@ router.post("/", verifyUserToken, resultValidation, async (req, res) => {
       mode: mode || (topicId ? "topic" : "subject"),
     });
 
-    res.status(201).json(result);
+    const unlockedBadges = await unlockBadges({
+      userId: req.userId,
+      score: Number(score),
+      total: Number(total),
+    });
+
+    res.status(201).json({
+      ...result.toObject(),
+      unlockedBadges,
+    });
   } catch (error) {
     console.error("Error saving result:", error);
     res.status(500).json({ message: "Failed to save result" });

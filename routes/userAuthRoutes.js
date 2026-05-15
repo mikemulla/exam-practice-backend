@@ -320,4 +320,61 @@ router.post(
   },
 );
 
+router.patch("/admin/bulk-update", verifyAdminToken, async (req, res) => {
+  try {
+    const { userIds, courseId, level } = req.body;
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        message: "Select at least one user",
+      });
+    }
+
+    const updateData = {};
+
+    if (courseId) {
+      const course = await Course.findById(courseId);
+
+      if (!course) {
+        return res.status(400).json({
+          message: "Invalid course selected",
+        });
+      }
+
+      updateData.courseId = courseId;
+    }
+
+    if (level) {
+      updateData.level = Number(level);
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        message: "No update data provided",
+      });
+    }
+
+    const result = await User.updateMany(
+      {
+        _id: {
+          $in: userIds,
+        },
+      },
+      {
+        $set: updateData,
+      },
+    );
+
+    res.json({
+      message: `${result.modifiedCount} users updated successfully`,
+    });
+  } catch (error) {
+    console.error("Bulk update users error:", error);
+
+    res.status(500).json({
+      message: "Failed to update users",
+    });
+  }
+});
+
 module.exports = router;
